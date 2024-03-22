@@ -15,6 +15,8 @@ pub struct Block {
     pub content: Content,
     /// The sortition proof of the content. In addition to the content Merkle root in block header, we are
     /// able to verify that the block is mined on a set of content candidates.
+    // 排序证明：用于在一组候选者中随机选择一个或多个实体来执行某项任务，例如挖矿或验证交易
+    // 基于内容候选项进行挖矿的
     pub sortition_proof: Vec<H256>,
 }
 

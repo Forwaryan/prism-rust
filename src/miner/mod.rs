@@ -400,15 +400,22 @@ impl Context {
             // update or rebuild the merkle tree according to what we did in the last stage
             if new_proposer_block || voter_shift {
                 // if there has been a new proposer block, simply rebuild the merkle tree
+                // 判断是否有新的提议者块或者投票者链发生了变化
+                // 根据上一阶段的操作来更新或重建默克尔树 
                 self.content_merkle_tree = MerkleTree::new(&self.contents);
             } else {
                 // if there has not been a new proposer block, update individual entries
                 // TODO: add batch updating to merkle tree
+                // 如果没有新的提议者块，那么就更新默克尔树的个别条目
+                // 遍历新的投票者链
                 for voter_chain in new_voter_block.iter() {
+                    // 计算出每个投票者链的ID
                     let chain_id = (FIRST_VOTER_INDEX + voter_chain) as usize;
                     self.content_merkle_tree
                         .update(chain_id, &self.contents[chain_id]);
                 }
+                // 如果有新的交易块 那么提议者区块和区块对应的默克尔树都需要更新
+                // 提议者区块(矿工)是指提出新的交易块的节点。当有新的交易块时，提议者区块的内容也会发生变化(如：包含的交易列表、时间戳、难度值等)
                 if new_transaction_block {
                     self.content_merkle_tree.update(
                         TRANSACTION_INDEX as usize,
@@ -434,10 +441,12 @@ impl Context {
 
             // Check if we successfully mined a block
             let header_hash = self.header.hash();
+            // 判断是否符合难度，即区块头的哈希值是否小于当前的难度
             if header_hash < self.header.difficulty {
                 // Create a block
                 let mined_block: Block = self.produce_block(header_hash);
                 //if the mined block is an empty tx block, we ignore it, and go straight to next mining loop
+                // 检查是否需要跳过该块，如果该块是空/无效则skip = true 跳过挖取该块
                 let skip: bool = {
                     if let OperatingState::Run(_, lazy) = self.operating_state {
                         if lazy {
@@ -458,8 +467,12 @@ impl Context {
                 };
 
                 if !skip {
+                    // 将新挖出的区块添加到区块链中，并广播新区块的哈希值
+
+                    // 记录挖出区块的信息，以便于分析挖矿的性能
                     PERFORMANCE_COUNTER.record_mine_block(&mined_block);
                     self.blockdb.insert(&mined_block).unwrap();
+                    // 验证新挖出的区块，验证通过后将其添加到区块链中
                     new_validated_block(
                         &mined_block,
                         &self.mempool,
@@ -470,6 +483,8 @@ impl Context {
                     // broadcast after adding the new block to the blockchain, in case a peer mines
                     // a block immediately after we broadcast, leaving us non time to insert into
                     // the blockchain
+                    // 添加新的区块后，我们广播新的区块，以防其他挖矿节点立即挖出一个区块，使我们没有时间将其插入到区块链中
+                    // 广播新区块的哈希值
                     self.server
                         .broadcast(Message::NewBlockHashes(vec![header_hash]));
                     // if we are stepping, pause the miner loop
@@ -500,6 +515,8 @@ impl Context {
                     let interval = interval_dist.sample(&mut rng);
                     let interval = time::Duration::from_micros(interval as u64);
                     let time_spent = time::Instant::now().duration_since(block_start);
+                    // 如果下一个时间的发生圣剑 大于 已过去的时间，则等待
+                    // 这样做是为了同步某种操作的频率
                     if interval > time_spent {
                         thread::sleep(interval - time_spent);
                     }
