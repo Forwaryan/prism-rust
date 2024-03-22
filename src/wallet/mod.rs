@@ -136,7 +136,7 @@ impl Wallet {
     /// Returns the sum of values of all the coin in the wallet
     pub fn balance(&self) -> Result<u64> {
         let cf = self.db.cf_handle(COIN_CF).unwrap();
-        let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start)?;
+        let iter: rocksdb::DBIterator<'_> = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start)?;
         let balance = iter
             .map(|(_, v)| {
                 let coin_data: Output = bincode::deserialize(v.as_ref()).unwrap();
@@ -209,7 +209,7 @@ impl Wallet {
             authorization: vec![],
             hash: RefCell::new(None),
         };
-        let mut authorization = vec![];
+        let mut authorization: Vec<Authorization> = vec![];
         owners.sort_unstable();
         owners.dedup();
         let raw_inputs = bincode::serialize(&unsigned.input).unwrap();

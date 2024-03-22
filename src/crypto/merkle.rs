@@ -48,9 +48,12 @@ impl MerkleTree {
 
         // fill in the bottom layer
         let (l, d) = layers.next().unwrap();
+        //移动到当前的第一个元素的位置
         layer_start -= l;
         let hashed_data: Vec<H256> = data.iter().map(|x| x.hash()).collect();
+        //将叶子节点的信息的哈希值都复制保存到nodes处
         nodes[layer_start..layer_start + d].copy_from_slice(&hashed_data);
+        //出现奇数个的时候将左后一个节点复制一份，凑成偶数个
         if l != d {
             nodes[layer_start + l - 1] = nodes[layer_start + d - 1];
         }
@@ -85,7 +88,8 @@ impl MerkleTree {
     }
 
     /// Returns the Merkle Proof of data at index i
-    // todo: Lei check this
+    // todo: Lei check this、
+    //获取index数据  从根到叶子节点的路径上的所有节点的哈希值，用于verify
     pub fn proof(&self, index: usize) -> Vec<H256> {
         if self.data_size.len() == 1 || index >= self.data_size[0] {
             return vec![];
@@ -99,7 +103,9 @@ impl MerkleTree {
         let mut layer = 0usize;
         let mut index = index;
         loop {
+            //节点本身
             let nodes_index = layer_start + index;
+            //它的兄弟节点
             let sibling_index = match nodes_index & 0x01 {
                 1 => nodes_index + 1,
                 _ => nodes_index - 1,
@@ -120,6 +126,7 @@ impl MerkleTree {
         results
     }
 
+    //根据要更新的索引更新整个树的哈希情况
     pub fn update<T>(&mut self, index: usize, data: &T)
     where
         T: Hashable,
@@ -131,11 +138,13 @@ impl MerkleTree {
             self.nodes[0] = data.hash();
             return;
         }
+        
         let last_layer_start = if self.data_size[0] & 0x01 == 1 {
             self.nodes.len() - self.data_size[0] - 1
         } else {
             self.nodes.len() - self.data_size[0]
         };
+        //每一层的起始位置
         let mut layer_start = last_layer_start;
         let mut layer = 0usize;
         let mut index = index;
@@ -234,7 +243,7 @@ pub fn verify(root: &H256, data: &H256, proof: &[H256], index: usize, leaf_size:
             ctx.update(&h[..]);
             ctx.update(&acc_[..]);
         }
-        let digest = ctx.finish();
+        let digest: ring::digest::Digest = ctx.finish();
         acc = digest.into();
         //DELETE:println!("\t= {}", acc);
         layer += 1;

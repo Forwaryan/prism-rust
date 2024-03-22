@@ -14,10 +14,13 @@ pub struct MemoryPool {
     /// Counter for storage index
     counter: u64,
     /// By-hash storage
+    /// 通过交易的哈希可以查找对应的条目
     by_hash: HashMap<H256, Entry>,
     /// Transactions by previous output, formatted as Input
+    /// 通过输入可以查找对应的交易
     by_input: HashMap<Input, H256>,
     /// Storage for order by storage index, it is equivalent to FIFO
+    /// 通过内存池中的索引可以查找对应的交易
     by_storage_index: BTreeMap<u64, H256>,
 }
 
@@ -26,6 +29,7 @@ pub struct Entry {
     /// Transaction
     pub transaction: Transaction,
     /// counter of the tx
+    /// 交易在内存池中的索引(顺序编号)
     storage_index: u64,
 }
 
@@ -41,7 +45,9 @@ impl MemoryPool {
         }
     }
 
+    
     /// Insert a tx into memory pool. The input of it will also be recorded.
+    /// 将一个交易插入到内存池中
     pub fn insert(&mut self, tx: Transaction) {
         if self.num_transactions > self.max_transactions {
             return;
@@ -85,6 +91,7 @@ impl MemoryPool {
         inputs.iter().any(|input| self.by_input.contains_key(input))
     }
 
+    // 用于移除内存池中的一个指定交易，并返回这个交易的条目
     fn remove_and_get(&mut self, hash: &H256) -> Option<Entry> {
         let entry = self.by_hash.remove(hash)?;
         for input in &entry.transaction.input {
@@ -96,12 +103,14 @@ impl MemoryPool {
     }
 
     /// Remove a tx by its hash, also remove its recorded inputs
+    /// 用于移除内存池中的一个指定交易
     pub fn remove_by_hash(&mut self, hash: &H256) {
         self.remove_and_get(hash);
     }
 
     /// Remove potential tx that use this input.
     /// This function runs recursively, so it may remove more transactions.
+    /// 根据交易的输入，删除输入后，要相应删除其相关的一系列交易
     pub fn remove_by_input(&mut self, prevout: &Input) {
         //use a deque to recursively remove, in case there are multi level dependency between txs.
         let mut queue: VecDeque<Input> = VecDeque::new();
@@ -126,6 +135,7 @@ impl MemoryPool {
     }
 
     /// get n transaction by fifo
+    /// 获取交易池的前k个交易
     pub fn get_transactions(&self, n: u32) -> Vec<Transaction> {
         self.by_storage_index
             .values()

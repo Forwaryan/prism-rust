@@ -28,6 +28,7 @@ use std::thread;
 use rand::Rng;
 
 enum ControlSignal {
+    //控制区块生成之间的间隔
     Start(u64, bool), // the number controls the lambda of interval between block generation
     Step,
     Exit,
@@ -38,8 +39,10 @@ pub enum ContextUpdateSignal {
     // TODO: New transaction comes, we update transaction block's content
     //NewTx,//should be called: mem pool change
     // New proposer block comes, we need to update all contents' parent
+    // 新的提议者区块来临时，我们需要更新所有内容的父级
     NewProposerBlock,
     // New voter block comes, we need to update that voter chain
+    // 新的投票者区块来临，我们需要更新该投票者链
     NewVoterBlock(u16),
     // New transaction block comes, we need to update proposer content's tx ref
     NewTransactionBlock,
@@ -57,8 +60,10 @@ pub struct Context {
     blockchain: Arc<BlockChain>,
     mempool: Arc<Mutex<MemoryPool>>,
     /// Channel for receiving control signal
+    /// 用于接收控制信号的通道
     control_chan: Receiver<ControlSignal>,
     /// Channel for notifying miner of new content
+    /// 提醒挖矿这有新的内容
     context_update_chan: Receiver<ContextUpdateSignal>,
     context_update_tx: Sender<ContextUpdateSignal>,
     operating_state: OperatingState,
@@ -190,9 +195,11 @@ impl Context {
         self.context_update_tx
             .send(ContextUpdateSignal::NewProposerBlock)
             .unwrap();
+
         self.context_update_tx
             .send(ContextUpdateSignal::NewTransactionBlock)
             .unwrap();
+
         for voter_chain in 0..self.config.voter_chains {
             self.context_update_tx
                 .send(ContextUpdateSignal::NewVoterBlock(voter_chain as u16))
@@ -242,9 +249,12 @@ impl Context {
             }
 
             // handle context updates
+            //B-树 高效的进行元素的插入、删除和查找操作
+            // touched_content 用来存储被修改的内容的索引
             let mut touched_content: BTreeSet<u16> = BTreeSet::new();
             let mut voter_shift = false;
             // update voter parents
+            //更新投票者的父节点
             for voter_chain in new_voter_block.iter() {
                 let chain_id: usize = (FIRST_VOTER_INDEX + voter_chain) as usize;
                 let voter_parent = self.blockchain.best_voter(*voter_chain as usize);
@@ -252,7 +262,9 @@ impl Context {
                     if voter_parent != c.voter_parent {
                         c.voter_parent = voter_parent;
                         // mark that we have shifted a vote
+                        // 标记投票者的父节点发生了变化
                         voter_shift = true;
+                        //插入到touched_content中表示chain_id已经被更新
                         touched_content.insert(chain_id as u16);
                     }
                 } else {
@@ -261,8 +273,9 @@ impl Context {
             }
 
             // update transaction block content
+            // 取出交易池的前tx_txs个交易放入到块c中
             if new_transaction_block {
-                let mempool = self.mempool.lock().unwrap();
+                let mempool: std::sync::MutexGuard<'_, MemoryPool> = self.mempool.lock().unwrap();
                 let transactions = mempool.get_transactions(self.config.tx_txs);
                 drop(mempool);
                 let _chain_id: usize = TRANSACTION_INDEX as usize;
@@ -281,7 +294,9 @@ impl Context {
             if new_transaction_block && !new_proposer_block {
                 if let Content::Proposer(c) = &mut self.contents[PROPOSER_INDEX as usize] {
                     // only update the references if we are not running out of quota
+                    // 检查是否超出了交易引用的上限，如果没有达到最大值，那么可以继续添加新的交易引用
                     if c.transaction_refs.len() < self.config.proposer_tx_refs as usize {
+                        // 获取所有未被引用的交易
                         let mut refs = self.blockchain.unreferred_transactions();
                         refs.truncate(self.config.proposer_tx_refs as usize);
                         c.transaction_refs = refs;
@@ -293,6 +308,7 @@ impl Context {
             }
 
             // update the best proposer
+            // 将当前块的父亲设置为最优块
             if new_proposer_block {
                 self.header.parent = self.blockchain.best_proposer().unwrap();
             }
@@ -305,15 +321,18 @@ impl Context {
             // sadly, we still may have race condition where the best proposer is updated, but the
             // blocks it refers to have not been removed from unreferred_{proposer, transaction}.
             // but this is pretty much the only race condition that we still have.
+            // 更新最佳提议者块，确保在此过程结束时，最佳提议者仍然是最佳的。否则，我们可能会有投票者/交易块的父块比我们的更深
             loop {
                 // first refresh the transaction and proposer refs if there has been a new proposer
                 // block
+                //如果有新的提议者块时，刷新交易引用和提议者引用 确保当前块包含了所有最新的、未被引用的交易和提议者
                 if new_proposer_block {
                     if let Content::Proposer(c) = &mut self.contents[PROPOSER_INDEX as usize] {
                         let mut refs = self.blockchain.unreferred_transactions();
                         refs.truncate(self.config.proposer_tx_refs as usize);
                         c.transaction_refs = refs;
                         c.proposer_refs = self.blockchain.unreferred_proposers();
+                        //一个块的父亲通常是在它之前添加到区块链中的块
                         let parent = self.header.parent;
                         c.proposer_refs.retain(|&x| x != parent);
                         touched_content.insert(PROPOSER_INDEX);
@@ -323,6 +342,7 @@ impl Context {
                 }
 
                 // then check whether our proposer parent is really the best
+                // 检查当前块的父亲是否是最优块
                 let best_proposer = self.blockchain.best_proposer().unwrap();
                 if self.header.parent == best_proposer {
                     break;
@@ -343,6 +363,7 @@ impl Context {
                         unreachable!();
                     };
                     if let Content::Voter(c) = &mut self.contents[chain_id] {
+                       //将未投票的提议者的票投给c区块
                         c.votes = self
                             .blockchain
                             .unvoted_proposer(&voter_parent, &self.header.parent)
@@ -373,6 +394,7 @@ impl Context {
             }
 
             // update the difficulty
+            // 根据父亲区块的难度值，更新当前区块头部的难度值，以保持区块生成速度相对稳定
             self.header.difficulty = self.get_difficulty(&self.header.parent);
 
             // update or rebuild the merkle tree according to what we did in the last stage
