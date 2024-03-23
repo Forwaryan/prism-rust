@@ -71,6 +71,7 @@ impl LedgerManager {
         let mut scoreboard: HashSet<H256> = HashSet::new();
         // Transaction coins keeps the mapping between transaction ID and the entries in the
         // scoreboard that this transaction is responsible for.
+        // 用于记录交易ID和与这个交易相关的 scoreboard 条目之间的映射
         let mut transaction_coins: HashMap<H256, Vec<H256>> = HashMap::new();
         // 有界通道，用于发送和接受交易
         let (transaction_tx, transaction_rx) = channel::bounded(buffer_size * num_workers);
@@ -91,6 +92,7 @@ impl LedgerManager {
                     // drain the notification channel so that we mark all finished transaction as
                     // finished
                     // 对于每一个已经处理完成的交易进行删除
+                    // 将transaction_coins和其对应的scoreboard都删除
                     for processed in notification_rx.try_iter() {
                         let finished_coins = transaction_coins.remove(&processed).unwrap();
                         for hash in &finished_coins {
@@ -108,7 +110,10 @@ impl LedgerManager {
 
                     // wait until we are not touching hot coins
                     // 防止冲突，使得当前处理的交易涉及的硬币没有正在被其他交易处理
+                    // 如果不处理冲突的话，可能这个交易被两个地方同时处理，因此要处理冲突
                     while !scoreboard.is_disjoint(&touched_coin_transaction_hash) {
+                        // 一直等待处理完成的交易，该交易处理完成后在对应的scoreboard中删除
+                        // 直到二者没有交集
                         let processed = notification_rx.recv().unwrap();
                         let finished_coins = transaction_coins.remove(&processed).unwrap();
                         for hash in &finished_coins {
@@ -117,17 +122,22 @@ impl LedgerManager {
                     }
 
                     // mark the coins that we will be touching as hot
+                    //touched_coin_transaction_hash 中的转移到scoreboard中
                     let mut touched: Vec<H256> = vec![];
                     for hash in touched_coin_transaction_hash.drain() {
                         touched.push(hash);
                         scoreboard.insert(hash);
                     }
+                    // transaction_coins存储了交易哈希值和其修改时可能触及的硬币
                     transaction_coins.insert(h, touched);
                     transaction_tx.send((false, t, h)).unwrap();
                 }
+
+                
                 for (t, h) in added_tx.drain(..) {
                     // drain the notification channel so that we mark all finished transaction as
                     // finished
+                    // 通过notification_rx处理所有已完成的交易
                     for processed in notification_rx.try_iter() {
                         let finished_coins = transaction_coins.remove(&processed).unwrap();
                         for hash in &finished_coins {
@@ -136,6 +146,7 @@ impl LedgerManager {
                     }
 
                     // collect the tx hash of all coins this tx will touch
+                    // 收集当前交易t所有可能涉及到的硬币的哈希值
                     let mut touched_coin_transaction_hash: HashSet<H256> = HashSet::new();
                     touched_coin_transaction_hash.insert(h); // the transaction hash of all output coins
                     for input in &t.input {
@@ -143,6 +154,7 @@ impl LedgerManager {
                     }
 
                     // wait until we are not touching hot coins
+                    // 防止产生冲突，等待当前处理的交易不涉及到正在处理的硬币
                     while !scoreboard.is_disjoint(&touched_coin_transaction_hash) {
                         let processed = notification_rx.recv().unwrap();
                         let finished_coins = transaction_coins.remove(&processed).unwrap();
@@ -185,10 +197,13 @@ impl LedgerManager {
 struct UtxoManager {
     utxodb: Arc<UtxoDatabase>,
     /// Channel for dispatching jobs (add/delete, transaction, hash of transaction).
+    /// 接受通道 用来接收作业（添加/删除，交易，交易哈希）的通道
     transaction_chan: channel::Receiver<(bool, Transaction, H256)>,
     /// Channel for returning added and removed coins.
+    /// 发送通道 用来返回添加和删除的硬币的通道
     coin_chan: channel::Sender<(Vec<(CoinId, Output)>, Vec<CoinId>)>,
     /// Channel for notifying the dispatcher about the completion of processing this transaction.
+    /// 发送通道 用来通知调度程序处理此交易的完成
     notification_chan: channel::Sender<H256>,
 }
 
@@ -221,7 +236,8 @@ fn update_transaction_sequence(
     blockdb: &BlockDatabase,
     chain: &BlockChain,
 ) -> (Vec<(Transaction, H256)>, Vec<(Transaction, H256)>) {
-    let diff = chain.update_ledger().unwrap();
+    // 这个元组的两个元素 分别代表了  被添加到账本中的交易 和 从账本中移除的交易
+    let diff: (Vec<H256>, Vec<H256>) = chain.update_ledger().unwrap();
     PERFORMANCE_COUNTER.record_deconfirm_transaction_blocks(diff.1.len());
 
     // gather the transaction diff
@@ -245,6 +261,7 @@ fn update_transaction_sequence(
         // here. The same for added transactions below. This is a very ugly hack.
         add.append(&mut transactions);
     }
+    
     for hash in diff.1 {
         let block = blockdb.get(&hash).unwrap().unwrap();
         let content = match block.content {
