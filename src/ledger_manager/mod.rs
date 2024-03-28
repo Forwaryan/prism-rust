@@ -77,7 +77,7 @@ impl LedgerManager {
         let (transaction_tx, transaction_rx) = channel::bounded(buffer_size * num_workers);
         // 无界通道，用于发送和接受通知
         let (notification_tx, notification_rx) = channel::unbounded();
-        // 无界通道，用于发送和接收币的差异
+        // 无界通道，传输 添加/删除的  交易
         let (coin_diff_tx, coin_diff_rx) = channel::unbounded();
 
         thread::spawn(move || {
@@ -220,6 +220,7 @@ impl UtxoManager {
     fn worker_loop(&self) {
         loop {
             let (add, transaction, hash) = self.transaction_chan.recv().unwrap();
+            // con_chan发送通知
             if add {
                 let diff = self.utxodb.add_transaction(&transaction, hash).unwrap();
                 self.coin_chan.send(diff).unwrap();
@@ -227,6 +228,7 @@ impl UtxoManager {
                 let diff = self.utxodb.remove_transaction(&transaction, hash).unwrap();
                 self.coin_chan.send(diff).unwrap();
             }
+            // 发送通知
             self.notification_chan.send(hash).unwrap();
         }
     }
@@ -237,12 +239,14 @@ fn update_transaction_sequence(
     chain: &BlockChain,
 ) -> (Vec<(Transaction, H256)>, Vec<(Transaction, H256)>) {
     // 这个元组的两个元素 分别代表了  被添加到账本中的交易 和 从账本中移除的交易
+    // 获取要更新到账本的交易块的哈希值
     let diff: (Vec<H256>, Vec<H256>) = chain.update_ledger().unwrap();
     PERFORMANCE_COUNTER.record_deconfirm_transaction_blocks(diff.1.len());
 
     // gather the transaction diff
     let mut add: Vec<(Transaction, H256)> = vec![];
     let mut remove: Vec<(Transaction, H256)> = vec![];
+    // diff.0 是存储量要添加到账本的交易块的哈希值
     for hash in diff.0 {
         let block = blockdb.get(&hash).unwrap().unwrap();
         PERFORMANCE_COUNTER.record_confirm_transaction_block(&block);

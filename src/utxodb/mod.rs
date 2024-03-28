@@ -51,6 +51,7 @@ impl UtxoDatabase {
         }
     }
 
+    // 获取快照，并计算所有键的异或校验和
     pub fn snapshot(&self) -> Result<Vec<u8>, rocksdb::Error> {
         let mut iter_opt = rocksdb::ReadOptions::default();
         iter_opt.set_prefix_same_as_start(false);
@@ -87,6 +88,7 @@ impl UtxoDatabase {
 
         // check whether the inputs used in this transaction are all unspent, and whether the value
         // field in inputs are correct, and whether all owners have signed the transaction
+        // 检查该交易是否合法 -  1. 检查输入是否都是未花费的 2. 检查输入的value是否正确 3. 检查所有的owner是否都签名了交易
         let mut owners: HashSet<Address> = HashSet::new();
         for input in &t.input {
             let id_ser = serialize(&input.coin).unwrap();
@@ -148,6 +150,7 @@ impl UtxoDatabase {
 
         // check whether the outputs of this transaction are there. if so, this transaction was
         // valid when it was originally added
+        // 将交易的输出都删掉
         for (idx, _out) in t.output.iter().enumerate() {
             let id = CoinId {
                 hash,
@@ -163,6 +166,7 @@ impl UtxoDatabase {
 
         // now that we have checked that this transaction was valid when originally added, we will
         // add back the input and commit to database
+        // 将该交易的输入再添加回数据库中
         for input in &t.input {
             let out = Output {
                 value: input.value,
@@ -185,8 +189,10 @@ impl UtxoDatabase {
         Ok((added_coins, removed_coins))
     }
 
+    // 将RocksDb数据库的内存表刷新到磁盘
     pub fn flush(&self) -> Result<(), rocksdb::Error> {
         let mut flush_opt = rocksdb::FlushOptions::default();
+        // 刷新操作将会阻塞，直到所有的数据都被刷新到磁盘
         flush_opt.set_wait(true);
         self.db.flush_opt(&flush_opt)
     }

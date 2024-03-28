@@ -168,6 +168,7 @@ impl Wallet {
             None => self.db.iterator_cf(cf, rocksdb::IteratorMode::Start)?,
         };
         // iterate through our wallet
+        // 收集足额的硬币来创建该交易
         for (k, v) in iter {
             let coin_id: CoinId = bincode::deserialize(k.as_ref()).unwrap();
             let coin_data: Output = bincode::deserialize(v.as_ref()).unwrap();
@@ -189,10 +190,12 @@ impl Wallet {
         }
         // if we have enough money in our wallet, create tx
         // remove used coin from wallet
+        // 删掉在该交易中我们用了的硬币
         self.apply_diff(&[], &coins_to_use)?;
 
         // create the output
         let mut output = vec![Output { recipient, value }];
+        // 如果我们拿出的硬币数量大于所需的，我们需要把多拿的放回去
         if value_sum > value {
             // transfer the remaining value back to self
             let recipient = self.addresses()?[0];
@@ -210,6 +213,8 @@ impl Wallet {
             hash: RefCell::new(None),
         };
         let mut authorization: Vec<Authorization> = vec![];
+        // 对交易的输入的所有者 提取  取出所有硬币的所有者 排序 去重
+        // 方便后续用输入的所有者的信息 进行对该交易进行签名
         owners.sort_unstable();
         owners.dedup();
         let raw_inputs = bincode::serialize(&unsigned.input).unwrap();
@@ -225,8 +230,10 @@ impl Wallet {
             } else {
                 return Err(WalletError::MissingKeyPair);
             }
+            //释放互斥锁
             drop(keypairs);
         }
+        // 原子类型进行减去一个值
         self.counter
             .fetch_sub(unsigned.input.len(), Ordering::Relaxed);
         Ok(Transaction {
