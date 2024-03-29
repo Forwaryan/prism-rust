@@ -368,6 +368,7 @@ impl Context {
             }
 
             // update the votes
+            // 如果有新的提议者区块，更新投票
             if new_proposer_block {
                 for voter_chain in 0..self.config.voter_chains {
                     let chain_id: usize = (FIRST_VOTER_INDEX + voter_chain) as usize;
@@ -377,7 +378,7 @@ impl Context {
                         unreachable!();
                     };
                     if let Content::Voter(c) = &mut self.contents[chain_id] {
-                       
+                       // 将票投给每一层获得票数较高的提议者区块
                         c.votes = self
                             .blockchain
                             .unvoted_proposer(&voter_parent, &self.header.parent)
