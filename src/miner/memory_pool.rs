@@ -110,9 +110,10 @@ impl MemoryPool {
 
     /// Remove potential tx that use this input.
     /// This function runs recursively, so it may remove more transactions.
-    /// 根据交易的输入，删除输入后，要相应删除其相关的一系列交易
+    /// 根据输入删除交易，如果这个交易的输出被别的交易引用，也会被删除
     pub fn remove_by_input(&mut self, prevout: &Input) {
         //use a deque to recursively remove, in case there are multi level dependency between txs.
+        // 可能会存在多级依赖关系，所以使用双端队列进行递归删除
         let mut queue: VecDeque<Input> = VecDeque::new();
         queue.push_back(prevout.clone());
 

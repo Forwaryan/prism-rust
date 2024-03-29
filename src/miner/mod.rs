@@ -45,6 +45,7 @@ pub enum ContextUpdateSignal {
     // 新的投票者区块来临，我们需要更新该投票者链
     NewVoterBlock(u16),
     // New transaction block comes, we need to update proposer content's tx ref
+    // 新的交易区块来临，需要更新提议者区块对交易区块的引用
     NewTransactionBlock,
 }
 
@@ -65,7 +66,9 @@ pub struct Context {
     /// Channel for notifying miner of new content
     /// 提醒挖矿这有新的内容
     context_update_chan: Receiver<ContextUpdateSignal>,
+
     context_update_tx: Sender<ContextUpdateSignal>,
+    // 表示操作状态
     operating_state: OperatingState,
     server: ServerHandle,
     header: Header,
@@ -200,6 +203,7 @@ impl Context {
             .send(ContextUpdateSignal::NewTransactionBlock)
             .unwrap();
 
+        // 多个投票链
         for voter_chain in 0..self.config.voter_chains {
             self.context_update_tx
                 .send(ContextUpdateSignal::NewVoterBlock(voter_chain as u16))
@@ -215,6 +219,7 @@ impl Context {
             // check and react to control signals
             match self.operating_state {
                 OperatingState::Paused => {
+                    // 同步接收信号，阻塞操作，它会等到有信号到来时才会返回
                     let signal = self.control_chan.recv().unwrap();
                     self.handle_control_signal(signal);
                     continue;
@@ -222,6 +227,7 @@ impl Context {
                 OperatingState::ShutDown => {
                     return;
                 }
+                // 非阻塞检查是否有控制信号，立即返回结果
                 _ => match self.control_chan.try_recv() {
                     Ok(signal) => {
                         self.handle_control_signal(signal);
@@ -235,6 +241,7 @@ impl Context {
             }
 
             // check whether there is new content through context update channel
+            // 检查是否有新的块被挖出来
             let mut new_transaction_block: bool = false;
             let mut new_voter_block: BTreeSet<u16> = BTreeSet::new();
             let mut new_proposer_block: bool = false;
@@ -254,8 +261,9 @@ impl Context {
             let mut touched_content: BTreeSet<u16> = BTreeSet::new();
             let mut voter_shift = false;
             // update voter parents
-            //更新投票者的父节点
+            //有新的投票者块加入
             for voter_chain in new_voter_block.iter() {
+                //FIRST_VOTER_INDEX 用来整content内容的下标相对值
                 let chain_id: usize = (FIRST_VOTER_INDEX + voter_chain) as usize;
                 let voter_parent = self.blockchain.best_voter(*voter_chain as usize);
                 if let Content::Voter(c) = &mut self.contents[chain_id] {
@@ -273,6 +281,7 @@ impl Context {
             }
 
             // update transaction block content
+            // 有新的交易块出现，我们填充内容并更新content
             // 取出交易池的前tx_txs个交易放入到块c中
             if new_transaction_block {
                 let mempool: std::sync::MutexGuard<'_, MemoryPool> = self.mempool.lock().unwrap();
@@ -291,6 +300,9 @@ impl Context {
             // FIXME: we are now refreshing the whole tree
             // note that if there are new proposer blocks, we will need to refresh tx refs in the
             // next step. In that case, don't bother doing it here.
+            // 将新挖出的交易块的哈希值添加到提议者区块的交易引用中
+            // 使得，提议者区块可以引用到新挖出的交易块
+            // 注意，这里如果有新的提议者区块，我们将不在这步更新 && !new_proposer_block
             if new_transaction_block && !new_proposer_block {
                 if let Content::Proposer(c) = &mut self.contents[PROPOSER_INDEX as usize] {
                     // only update the references if we are not running out of quota
@@ -308,7 +320,7 @@ impl Context {
             }
 
             // update the best proposer
-            // 将当前块的父亲设置为最优块
+            // 将当前区块的父块设置为最佳提议者块
             if new_proposer_block {
                 self.header.parent = self.blockchain.best_proposer().unwrap();
             }
@@ -328,9 +340,11 @@ impl Context {
                 //如果有新的提议者块时，刷新交易引用和提议者引用 确保当前块包含了所有最新的、未被引用的交易和提议者
                 if new_proposer_block {
                     if let Content::Proposer(c) = &mut self.contents[PROPOSER_INDEX as usize] {
+                        // 获取未被引用的交易者区块
                         let mut refs = self.blockchain.unreferred_transactions();
                         refs.truncate(self.config.proposer_tx_refs as usize);
                         c.transaction_refs = refs;
+                        // 获取未被引用的提议者区块
                         c.proposer_refs = self.blockchain.unreferred_proposers();
                         //一个块的父亲通常是在它之前添加到区块链中的块
                         let parent = self.header.parent;
@@ -342,7 +356,7 @@ impl Context {
                 }
 
                 // then check whether our proposer parent is really the best
-                // 检查当前块的父亲是否是最优块
+                // 检查当前块的父亲是否是最优块，如果不是的话更新为最优块
                 let best_proposer = self.blockchain.best_proposer().unwrap();
                 if self.header.parent == best_proposer {
                     break;
@@ -363,7 +377,7 @@ impl Context {
                         unreachable!();
                     };
                     if let Content::Voter(c) = &mut self.contents[chain_id] {
-                       //将未投票的提议者的票投给c区块
+                       
                         c.votes = self
                             .blockchain
                             .unvoted_proposer(&voter_parent, &self.header.parent)
@@ -400,7 +414,7 @@ impl Context {
             // update or rebuild the merkle tree according to what we did in the last stage
             if new_proposer_block || voter_shift {
                 // if there has been a new proposer block, simply rebuild the merkle tree
-                // 判断是否有新的提议者块或者投票者链发生了变化
+                // 判断是否有新的提议者块或者投票者链发生了变化 - 重建默克尔树
                 // 根据上一阶段的操作来更新或重建默克尔树 
                 self.content_merkle_tree = MerkleTree::new(&self.contents);
             } else {
@@ -408,6 +422,9 @@ impl Context {
                 // TODO: add batch updating to merkle tree
                 // 如果没有新的提议者块，那么就更新默克尔树的个别条目
                 // 遍历新的投票者链
+
+                // 投票者链和交易区块的内容发生了变化，需要更新默克尔树
+
                 for voter_chain in new_voter_block.iter() {
                     // 计算出每个投票者链的ID
                     let chain_id = (FIRST_VOTER_INDEX + voter_chain) as usize;
@@ -515,7 +532,7 @@ impl Context {
                     let interval = interval_dist.sample(&mut rng);
                     let interval = time::Duration::from_micros(interval as u64);
                     let time_spent = time::Instant::now().duration_since(block_start);
-                    // 如果下一个时间的发生圣剑 大于 已过去的时间，则等待
+                    // 如果下一个时间的发生时间 大于 已过去的时间，则等待
                     // 这样做是为了同步某种操作的频率
                     if interval > time_spent {
                         thread::sleep(interval - time_spent);

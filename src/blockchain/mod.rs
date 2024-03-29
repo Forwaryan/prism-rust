@@ -949,6 +949,7 @@ impl BlockChain {
 
         // get the block with the most votes on each proposer level
         // and break ties with hash value
+        // 在提议者树上的每一层取出得票最多的提议者块，然后返回集合所有提议者区块的列表
         let mut list: Vec<H256> = vec![];
         for level in first_vote_level + 1..=last_vote_level {
             let mut blocks: Vec<H256> = deserialize(
